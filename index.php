@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 
+
 // webhook.php
 require __DIR__ . '/vendor/autoload.php';
 
@@ -19,6 +20,44 @@ const GCS_BUCKET      = 'botvalidade'; // <- seu bucket
 const DB_PATH         = __DIR__ . '/data/bot.db';
 const MAX_DATE_OPTIONS = 8;
 
+
+function pdo(): PDO {
+    static $pdo = null;
+    if ($pdo) return $pdo;
+
+    $dbName = getenv('DB_NAME');
+    $dbUser = getenv('DB_USER');
+    $dbPass = getenv('DB_PASS');
+    $conn   = getenv('CLOUDSQL_CONNECTION_NAME');
+
+    $dsn = sprintf('mysql:unix_socket=/cloudsql/%s;dbname=%s;charset=utf8mb4', $conn, $dbName);
+    $pdo = new PDO($dsn, $dbUser, $dbPass, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    ]);
+
+    // Cria a tabela se não existir (equivalente ao seu SQLite)
+    $pdo->exec(<<<SQL
+CREATE TABLE IF NOT EXISTS confirmations (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  chat_id VARCHAR(64) NOT NULL,
+  user_id BIGINT NULL,
+  username VARCHAR(128) NULL,
+  tg_file_id VARCHAR(256) NOT NULL,
+  gcs_uri VARCHAR(512) NULL,
+  ocr_text MEDIUMTEXT NULL,
+  options_json JSON NULL,
+  confirmed_option VARCHAR(64) NULL,
+  expires_on DATE NULL,
+  confirmed_at DATETIME NULL,
+  notified_30d TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_expires_notified (expires_on, notified_30d)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+SQL);
+
+    return $pdo;
+}
 // =====================
 // BOOTSTRAP DB
 // =====================
@@ -210,13 +249,12 @@ if (isset($update['callback_query'])) {
         $uname = $from['username'] ?? ($from['first_name'] ?? 'Usuário');
         $uid   = $from['id'] ?? null;
 
-        $stmt = $db->prepare('UPDATE confirmations SET user_id=:uid, username=:un, confirmed_option=:opt, expires_on=:iso, confirmed_at=:ts WHERE id=:id');
-        $stmt->bindValue(':uid', $uid, SQLITE3_INTEGER);
-        $stmt->bindValue(':un', $uname, SQLITE3_TEXT);
-        $stmt->bindValue(':opt', $pickedLabel, SQLITE3_TEXT);
-        $stmt->bindValue(':iso', $iso, SQLITE3_TEXT);
-        $stmt->bindValue(':ts',  $nowIso, SQLITE3_TEXT);
-        $stmt->bindValue(':id',  $cid, SQLITE3_INTEGER);
+        // ao confirmar
+        $stmt = pdo()->prepare('UPDATE confirmations
+           SET user_id=?, username=?, confirmed_option=?, expires_on=?, confirmed_at=NOW()
+         WHERE id=?');
+
+        $stmt->execute([$uid, $uname, $pickedLabel, $iso, $cid]);
 
         $msg = $iso ? "✅ $uname confirmou a validade: *{$pickedLabel}* (ISO: `$iso`)" 
                     : "✅ $uname confirmou a validade: *{$pickedLabel}*";
@@ -270,19 +308,17 @@ if (isset($update['message']['photo'])) {
     }
 
     // cria registro PENDENTE e mostra teclado
-    $stmt = $db->prepare('INSERT INTO confirmations (chat_id, tg_file_id, gcs_uri, ocr_text, options_json) VALUES (:chat, :tg, :gcs, :ocr, :opts)');
-    if (!$stmt) {
-        $x = "Erro: " . $db->lastErrorMsg();
-        tgApi('sendMessage', ['chat_id'=>$chatId, 'text'=>$x]);
-        exit;
-    }
-    $stmt->bindValue(':chat', (string)$chatId, SQLITE3_TEXT);
-    $stmt->bindValue(':tg',   $fileId,        SQLITE3_TEXT);
-    $stmt->bindValue(':gcs',  $gcsUri,        SQLITE3_TEXT);
-    $stmt->bindValue(':ocr',  $full,          SQLITE3_TEXT);
-    $stmt->bindValue(':opts', json_encode($options, JSON_UNESCAPED_UNICODE), SQLITE3_TEXT);
-    $stmt->execute();
-    $cid = (int)$db->lastInsertRowID();
+    $stmt = pdo()->prepare('INSERT INTO confirmations (chat_id, tg_file_id, gcs_uri, ocr_text, options_json)
+                            VALUES (?, ?, ?, ?, ?)');
+    $stmt->execute([
+      (string)$chatId,
+      $fileId,
+      $gcsUri,
+      $fullText,
+      json_encode($options, JSON_UNESCAPED_UNICODE)
+    ]);
+    $cid = (int)pdo()->lastInsertId();
+
 
     $kb = kbFromOptions($options, $cid);
     tgApi('sendMessage', [
