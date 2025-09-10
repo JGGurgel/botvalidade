@@ -61,28 +61,6 @@ SQL);
 // =====================
 // BOOTSTRAP DB
 // =====================
-if (!is_dir(dirname(DB_PATH))) {
-    mkdir(dirname(DB_PATH), 0775, true);
-}
-$db = new SQLite3(DB_PATH);
-$db->exec('PRAGMA journal_mode=WAL');
-$db->exec('CREATE TABLE IF NOT EXISTS confirmations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    chat_id TEXT NOT NULL,
-    user_id INTEGER,
-    username TEXT,
-    tg_file_id TEXT NOT NULL,
-    gcs_uri TEXT,
-    ocr_text TEXT,
-    options_json TEXT,
-    confirmed_option TEXT,
-    expires_on TEXT,          -- YYYY-MM-DD
-    confirmed_at TEXT,        -- ISO datetime
-    notified_30d INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-');
-
 // =====================
 // HELPERS
 // =====================
@@ -230,8 +208,17 @@ if (isset($update['callback_query'])) {
         $cid  = (int)$m[1];
         $opt  = $m[2];
 
-        $row = $db->querySingle("SELECT id, options_json, tg_file_id FROM confirmations WHERE id=$cid", true);
-        if (!$row) { tgApi('sendMessage', ['chat_id'=>$chatId, 'text'=>"Registro não encontrado."]); exit; }
+        // usando PDO
+        $stmt = pdo()->prepare("SELECT id, options_json, tg_file_id 
+                               FROM confirmations 
+                               WHERE id = ?");
+        $stmt->execute([$cid]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$row) {
+            tgApi('sendMessage', ['chat_id'=>$chatId, 'text'=>"Registro não encontrado."]); 
+            exit; 
+        }
 
         if ($opt === 'none') {
             tgApi('sendMessage', ['chat_id'=>$chatId, 'text'=>"⚠️ Nenhuma data estava correta. Envie outra foto ou digite a data."]);
