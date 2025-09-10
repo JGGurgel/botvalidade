@@ -1,9 +1,7 @@
 runtime: php82
 
 env_variables:
-  DB_HOST: 35.224.167.79
-  DB_NAME: botvalidade
   DB_USER: botvalidade
-  DB_PASS: Botvalidade13@++
-  # Connection name do Cloud SQL (para o conector do App Engine)
+  DB_PASS: "Botvalidade13@++"
+  DB_NAME: botvalidade
   CLOUDSQL_CONNECTION_NAME: botvalidade:us-central1:botvalidade
