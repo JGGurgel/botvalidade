@@ -78,9 +78,8 @@ while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
         'parse_mode' => 'Markdown'
     ]);
 
-    $upd = $db->prepare('UPDATE confirmations SET notified_30d = 1 WHERE id = :id');
-    $upd->bindValue(':id', (int)$row['id'], SQLITE3_INTEGER);
-    $upd->execute();
+    $upd = pdo()->prepare('UPDATE confirmations SET notified_30d = 1 WHERE id = ?');
+    $upd->execute([(int)$row['id']]);
 }
 
 echo "done\n";
